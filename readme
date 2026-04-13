@@ -1,1 +1,251 @@
+SM Irigasi — Sistem Monitoring Irigasi Sawah Berbasis PHP & MySQL
+SM Irigasi adalah platform web untuk memantau kondisi jaringan irigasi sawah secara real-time. Dibangun dengan PHP Native, MySQL, JavaScript, dan Tailwind CSS, sistem ini memungkinkan petani, petugas lapangan, dan administrator untuk mengakses data sensor, melaporkan kendala, serta mengelola pengguna dalam satu platform terpadu.
 
+Proyek ini dibuat untuk memenuhi tugas praktikum Pemrograman Web — Program Studi D3 Teknik Informatika, Sekolah Vokasi, Universitas Sebelas Maret.
+
+Fitur Utama
+Fitur	Deskripsi
+Autentikasi Multi-Role	Login & registrasi dengan pembedaan hak akses (petani, petugas lapangan, koordinator irigasi, administrator)
+Dashboard Admin	Kelola pengguna (ubah role, hapus), kelola laporan kendala (ubah status), serta ringkasan KPI dan grid sensor
+Monitoring Sensor Real-Time	Tampilan data sensor (debit, TMA, suhu, kelembapan) yang diperbarui setiap 4 detik menggunakan JavaScript
+Peta Sensor Interaktif	Visualisasi 8 titik sensor dalam bentuk SVG dengan warna status (normal, rendah, tinggi, kritis)
+Riwayat Data	Filter, grafik tren debit, dan ekspor CSV untuk data historis sensor
+Laporan Kendala	Petani dapat melaporkan masalah irigasi, admin dapat mengubah status laporan
+Teknologi yang Digunakan
+Backend: PHP Native (dengan MySQLi)
+
+Database: MySQL
+
+Frontend: HTML5, CSS3 (Tailwind CSS + Custom CSS)
+
+Interaktivitas: JavaScript (Vanilla JS)
+
+Grafik & Peta: SVG + CSS Grid
+
+Keamanan: password_hash() / password_verify(), prepared statement, session_regenerate_id()
+
+Struktur File Penting
+text
+SM-Irigasi/
+├── koneksi.php              # Koneksi database
+├── login.php                # Halaman login & register (tab)
+├── proseslogin.php          # Logika autentikasi
+├── prosesregistrasi.php     # Logika pendaftaran user
+├── logout.php               # Hancurkan session
+├── index.php                # Halaman utama (monitoring + laporan)
+├── dashboard.php            # Halaman administrator
+├── peta.php                 # Peta sensor interaktif
+├── riwayat.php              # Riwayat data + ekspor CSV
+└── db_irigasi.sql           # Struktur database (tidak disertakan, bisa di ekspor dari phpMyAdmin)
+Penjelasan Logika Kode (Edukatif)
+Berikut adalah penjelasan mendalam tentang bagaimana alur data dan logika sistem bekerja. Saya akan membedah bagian-bagian kode yang paling penting.
+
+1. Koneksi Database — koneksi.php
+php
+$conn = mysqli_connect('localhost', 'root', '', 'db_irigasi');
+if (!$conn) {
+    error_log("Koneksi DB gagal: " . mysqli_connect_error());
+    die("Koneksi database gagal. Silakan coba lagi nanti.");
+}
+mysqli_set_charset($conn, 'utf8mb4');
+Penjelasan:
+
+Fungsi mysqli_connect() membuka jalur komunikasi antara PHP dan MySQL. Parameter yang dimasukkan: host (localhost), username (root), password (kosong di lokal), dan nama database.
+
+error_log() mencatat pesan error ke file log server (misalnya error_log di folder XAMPP) — ini lebih aman daripada menampilkan error langsung ke browser.
+
+die() menghentikan eksekusi script jika koneksi gagal, menampilkan pesan ramah ke pengguna.
+
+mysqli_set_charset('utf8mb4') memastikan karakter seperti emoji atau aksara daerah tidak rusak saat disimpan ke database.
+
+Mengapa tidak menggunakan mysql_?
+Karena mysql_ sudah deprecated dan rawan SQL injection. mysqli_ (MySQL improved) mendukung prepared statement dan multi-query.
+
+2. Sistem Autentikasi — Login & Registrasi
+a. Proses Registrasi (prosesregistrasi.php)
+php
+// Validasi input
+if (empty($nama_depan) || empty($email) || strlen($password) < 6) {
+    header("Location: login.php?tab=register&reg_error=kosong");
+    exit();
+}
+
+// Cek duplikat username/email
+$stmt = mysqli_prepare($conn, "SELECT id_users FROM users WHERE username = ? OR email = ?");
+mysqli_stmt_bind_param($stmt, 'ss', $username, $email);
+mysqli_stmt_execute($stmt);
+mysqli_stmt_store_result($stmt);
+
+if (mysqli_stmt_num_rows($stmt) > 0) {
+    header("Location: login.php?tab=register&reg_error=duplikat");
+    exit();
+}
+
+// Hash password
+$hash = password_hash($password, PASSWORD_DEFAULT);
+
+// Simpan user dengan role default 'petani'
+$stmt2 = mysqli_prepare($conn, "INSERT INTO users (nama_depan, nama_belakang, username, email, password, role) VALUES (?, ?, ?, ?, ?, 'petani')");
+mysqli_stmt_bind_param($stmt2, 'sssss', $nama_depan, $nama_belakang, $username, $email, $hash);
+mysqli_stmt_execute($stmt2);
+Penjelasan:
+
+Validasi berlapis: Tidak ada satu pun kolom yang boleh kosong, email harus valid, dan password minimal 6 karakter. Ini mencegah data sampah masuk ke database.
+
+Cek duplikat menggunakan prepared statement. Jika username atau email sudah ada, user akan diarahkan kembali ke form registrasi dengan pesan error.
+
+password_hash() mengubah password menjadi string acak yang tidak bisa dibalik (one-way hashing). Algoritma default PASSWORD_DEFAULT saat ini adalah Bcrypt, yang sudah sangat aman.
+
+Role dikunci 'petani' — user biasa tidak bisa memilih role. Hanya administrator yang bisa mengubah role nanti di dashboard.
+
+b. Proses Login (proseslogin.php)
+php
+session_start();
+
+$stmt = mysqli_prepare($conn, "SELECT id_users, nama_depan, nama_belakang, username, email, password, role FROM users WHERE username = ? OR email = ? LIMIT 1");
+mysqli_stmt_bind_param($stmt, 'ss', $username, $username);
+mysqli_stmt_execute($stmt);
+$user = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+if ($user && password_verify($password, $user['password'])) {
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $user['id_users'];
+    $_SESSION['username'] = $user['username'];
+    $_SESSION['role'] = $user['role'];
+
+    if ($user['role'] === 'administrator') {
+        header("Location: dashboard.php");
+    } else {
+        header("Location: index.php");
+    }
+    exit();
+}
+Penjelasan:
+
+session_start() memulai atau melanjutkan sesi yang ada. Data session disimpan di server, hanya ID session yang dikirim ke browser sebagai cookie.
+
+password_verify() membandingkan password plaintext dari form dengan hash yang tersimpan di database. Fungsi ini otomatis mendeteksi algoritma hash yang digunakan, jadi kita tidak perlu tahu apakah hash itu Bcrypt, Argon2, dll.
+
+session_regenerate_id(true) membuat ID session baru dan menghapus ID lama. Ini mencegah serangan session fixation, di mana penyerang memaksa korban menggunakan ID session yang sudah diketahui.
+
+Data session disimpan (user_id, username, role) dan digunakan di seluruh halaman untuk menentukan hak akses.
+
+3. Manajemen Role — Halaman Admin vs Petani
+Di index.php (halaman publik), kita mengecek role untuk menampilkan menu Admin:
+
+php
+<?php if ($role === 'administrator'): ?>
+<a href="dashboard.php" class="...">Admin</a>
+<?php endif; ?>
+Di dashboard.php, proteksi di awal file:
+
+php
+session_start();
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'administrator') {
+    header("Location: index.php");
+    exit();
+}
+Penjelasan:
+
+Prinsip Defense in Depth: Proteksi tidak hanya di sisi tampilan (menu Admin hanya muncul untuk admin), tetapi juga di sisi logika halaman. Jika seseorang mencoba mengakses dashboard.php langsung melalui URL, mereka akan diarahkan ke index.php.
+
+Role disimpan di session, jadi tidak perlu query ke database setiap kali halaman dimuat. Ini lebih cepat dan efisien.
+
+4. Alur Data — Laporan Kendala
+a. Pengiriman Laporan (index.php)
+php
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kirim_laporan'])) {
+    $nama_pelapor = trim($_POST['nama_pelapor'] ?? '');
+    $lokasi = trim($_POST['lokasi_kendala'] ?? '');
+    $jenis_kendala = trim($_POST['jenis_kendala'] ?? '');
+
+    if (empty($nama_pelapor) || empty($lokasi) || empty($jenis_kendala)) {
+        $pesan_laporan = 'Mohon isi semua kolom.';
+    } else {
+        $id_user = (int)($_SESSION['user_id'] ?? 0) ?: null;
+        $stmt = mysqli_prepare($conn, "INSERT INTO laporan_kendala (id_users, nama_pelapor, lokasi, jenis_kendala) VALUES (?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, 'isss', $id_user, $nama_pelapor, $lokasi, $jenis_kendala);
+        mysqli_stmt_execute($stmt);
+        $pesan_laporan = 'Laporan berhasil dikirim!';
+    }
+}
+Penjelasan:
+
+Form laporan dikirim ke halaman yang sama (self-submit) dengan method POST.
+
+Data dibersihkan dengan trim() untuk menghilangkan spasi berlebih di awal/akhir.
+
+Validasi sederhana: semua kolom wajib diisi. Jika ada yang kosong, pesan error disimpan ke variabel $pesan_laporan dan ditampilkan di atas form.
+
+id_user diambil dari session (jika user login) atau NULL jika tidak login. Tabel menerima NULL karena relasi id_users ke users.id_users tidak di-set sebagai NOT NULL.
+
+b. Tampil di Dashboard Admin (dashboard.php)
+php
+$laporan = mysqli_query($conn, "SELECT lk.*, u.username 
+    FROM laporan_kendala lk 
+    LEFT JOIN users u ON lk.id_users = u.id_users 
+    ORDER BY lk.created_at DESC");
+Penjelasan:
+
+LEFT JOIN memastikan semua laporan tetap muncul meskipun user pelapor sudah dihapus dari sistem. Jika user masih ada, kolom username akan terisi; jika tidak, kolom tersebut NULL.
+
+ORDER BY created_at DESC menempatkan laporan terbaru di baris paling atas.
+
+c. Update Status Laporan
+php
+if ($_POST['aksi'] === 'ubah_status_laporan') {
+    $id_l = (int)($_POST['id_laporan'] ?? 0);
+    $s = $_POST['status'] ?? '';
+    if ($id_l > 0 && in_array($s, ['baru','ditangani','selesai'])) {
+        $st = mysqli_prepare($conn, "UPDATE laporan_kendala SET status=? WHERE id_laporan=?");
+        mysqli_stmt_bind_param($st, 'si', $s, $id_l);
+        mysqli_stmt_execute($st);
+    }
+    header("Location: dashboard.php?msg=status_ok#laporan");
+    exit();
+}
+Penjelasan:
+
+in_array($s, ['baru','ditangani','selesai']) adalah whitelist validation — hanya tiga nilai yang diizinkan. Ini lebih aman daripada hanya mengandalkan dropdown HTML karena user jahat bisa memodifikasi request HTTP.
+
+Prepared statement UPDATE ... SET status=? WHERE id_laporan=? mencegah SQL injection.
+
+Redirect dengan #laporan membuat halaman langsung scroll ke tab Laporan Kendala.
+
+5. Simulasi Data Sensor Real-Time (JavaScript)
+javascript
+function perbaruiSensor() {
+    for (var i = 0; i < dataSensor.length; i++) {
+        var s = dataSensor[i];
+
+        s.debit  = Math.max(0.5, s.debit + (Math.random() - 0.5));
+        s.tma    = Math.max(5,   s.tma   + Math.round((Math.random() - 0.5) * 3));
+        s.lembap = Math.min(100, Math.max(10, s.lembap + Math.round((Math.random() - 0.5) * 2)));
+
+        if (s.tma < 15) s.status = "kritis";
+        else if (s.tma < 25) s.status = "rendah";
+        else if (s.tma > 65) s.status = "tinggi";
+        else s.status = "normal";
+    }
+    renderTabel();
+}
+setInterval(perbaruiSensor, 4000);
+Penjelasan:
+
+Karena proyek ini tidak terhubung dengan hardware sensor sungguhan, saya menggunakan simulasi di sisi klien (browser).
+
+Math.random() - 0.5 menghasilkan nilai acak antara -0.5 hingga 0.5, mensimulasikan fluktuasi data sensor.
+
+Math.max() dan Math.min() menjaga nilai tetap dalam batas realistis (debit tidak negatif, kelembapan tidak lebih dari 100%).
+
+Logika status sensor didasarkan pada Tinggi Muka Air (TMA):
+
+TMA < 15 cm → kritis (air terlalu dangkal)
+
+TMA 15-24 cm → rendah (perlu perhatian)
+
+TMA 25-65 cm → normal (ideal)
+
+TMA > 65 cm → tinggi (risiko banjir)
+
+setInterval(perbaruiSensor, 4000) memanggil fungsi setiap 4 detik, memberikan efek real-time tanpa perlu refresh halaman.
